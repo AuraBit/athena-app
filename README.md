@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/Go-media%20service-00ADD8?logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/gRPC-11%20microservices-244c5a" alt="gRPC">
+  <img src="https://img.shields.io/badge/CI-merge%20queue%20%2B%20CODEOWNERS-2088FF?logo=githubactions&logoColor=white" alt="CI: merge queue + CODEOWNERS">
+  <img src="https://img.shields.io/badge/status-workloads%20incoming-8957e5" alt="Status: workloads incoming">
 </p>
 
 ---
