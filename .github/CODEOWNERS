@@ -1,0 +1,51 @@
+# CODEOWNERS — routes PR review requests to simulated domain teams (REPO-03, D-07).
+#
+# GitHub uses the LAST matching pattern in this file, not the most specific
+# one — so this file is deliberately ordered broad -> specific: a root
+# default, then the workflow directory, then increasingly specific
+# per-service paths. Every owner below must be one of the six team slugs
+# governance/teams.tf creates (verified against
+# `gh api /orgs/AuraBit/teams --jq '.[].slug'` before this file was written)
+# and must match character-for-character or GitHub silently drops the
+# routing for that path without any error.
+
+# Root default owner — anything not matched more specifically below falls
+# to team-platform.
+* @AuraBit/team-platform
+
+# Workflow-injection defense: the team that owns the pipeline is the only
+# team that can change what the pipeline runs. Kept as its own rule (not
+# folded into the root default) so it stays correct even if a more specific
+# rule below is ever mis-ordered.
+/.github/ @AuraBit/team-platform
+
+# --- Per-service ownership -------------------------------------------------
+#
+# NOTE: Phase 3 creates these service directories — they do not exist in
+# this monorepo yet. Declaring the routing ahead of the code is deliberate
+# (REPO-03's flagged assumption in 01-05-PLAN.md): the review-routing rules
+# must be in place before the first service lands, not retrofitted after.
+# Paths follow Online Boutique's own src/<service>/ layout, which Phase 3's
+# fork preserves.
+
+# team-storefront: frontend, adservice, recommendationservice
+/src/frontend/ @AuraBit/team-storefront
+/src/adservice/ @AuraBit/team-storefront
+/src/recommendationservice/ @AuraBit/team-storefront
+
+# team-commerce: cartservice, checkoutservice, paymentservice, shippingservice
+/src/cartservice/ @AuraBit/team-commerce
+/src/checkoutservice/ @AuraBit/team-commerce
+/src/paymentservice/ @AuraBit/team-commerce
+/src/shippingservice/ @AuraBit/team-commerce
+
+# team-catalog: productcatalogservice, currencyservice
+/src/productcatalogservice/ @AuraBit/team-catalog
+/src/currencyservice/ @AuraBit/team-catalog
+
+# team-comms: emailservice, loadgenerator
+/src/emailservice/ @AuraBit/team-comms
+/src/loadgenerator/ @AuraBit/team-comms
+
+# team-media: the custom Go media service (Postgres + S3 uploads + Redis sessions)
+/src/media/ @AuraBit/team-media

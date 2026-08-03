@@ -1,0 +1,44 @@
+name: lint
+
+# athena-app is a monorepo (Phase 3 fills it with Online-Boutique-derived
+# services + the custom media service). It alone carries the merge_group
+# trigger from day one (D-02) — retrofitting it later would mean touching
+# every workflow this monorepo will ever have. push+pull_request cover the
+# ordinary CI path; merge_group covers the ruleset's merge-queue rule
+# (protections.tf) evaluating this check before a queued PR actually merges.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+# Org default is already read-only (actions-security.tf), but this repo
+# states its own baseline explicitly too — every workflow in this estate
+# copies this shape (D-08). Jobs elevate only what they individually need;
+# this placeholder job needs nothing beyond read.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # actions/checkout pinned to a full 40-character commit SHA, not a
+      # mutable tag — the control against the tj-actions-style supply-chain
+      # compromise, where a tag was repointed at malicious code after the
+      # fact. A SHA is immutable; a tag is not.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # Placeholder lint step — athena-app has no application code yet
+      # (Phase 3 forks Online Boutique + adds the media service into this
+      # repo). This job exists only so protections.tf's ruleset has a real,
+      # passing required-status-check to hang on; Phase 3 replaces this
+      # step with real path-filtered lint/build/test.
+      - name: placeholder lint (replaced by Phase 3's real CI)
+        run: |
+          echo "athena-app has no service code yet — Phase 3 replaces this step."
+          exit 0
