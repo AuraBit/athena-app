@@ -292,6 +292,14 @@ jobs:
           echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # network=host is load-bearing: this action's default is a
+          # docker-container BuildKit on the bridge network, where
+          # localhost:5000 is the BUILDER's own loopback — the cache
+          # import/export below then fails with connection-refused against
+          # the estate registry. Host networking makes the runner host's
+          # 127.0.0.1:5000 (the k3d registry) reachable from BuildKit.
+          driver-opts: network=host
 
       - name: docker buildx build — registry-backed cache (mode=max, ALL intermediate layers)
         # mode=max, not the default mode=min, is deliberate: mode=min
