@@ -12,10 +12,11 @@
 // SIGHUP handler, or a periodic re-read here; that would silently remove
 // the exact defect Phase 5 exists to find and fix (CONTEXT.md D-12).
 //
-// This task (Plan 03-01, Task 2) only needs the HTTP listen port and the
-// environment name. Plans 03-04 and 03-05 grow this same Config struct with
-// Postgres, Valkey and S3 settings — never a second config type or a second
-// loader.
+// This struct started (Plan 03-01, Task 2) with only the HTTP listen port
+// and the environment name. Plan 03-04's Task 1 grows it with the Postgres
+// connection string — never a second config type or a second loader. That
+// same plan's Task 2 will grow it further with the Valkey address and
+// session lifetime, and Plan 03-05 will add S3 settings the same way.
 package config
 
 import (
@@ -32,6 +33,10 @@ type Config struct {
 	// used only for identification (e.g. log context) — never branches
 	// business logic on it.
 	Environment string
+	// DatabaseURL is the Postgres connection string
+	// (postgres://user:pass@host:port/db?sslmode=disable) the pgx pool in
+	// internal/db is constructed from.
+	DatabaseURL string
 }
 
 // Load reads every setting from environment variables a single time. A
@@ -49,8 +54,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("required environment variable MEDIA_ENVIRONMENT is not set")
 	}
 
+	databaseURL := os.Getenv("MEDIA_DATABASE_URL")
+	if databaseURL == "" {
+		return nil, fmt.Errorf("required environment variable MEDIA_DATABASE_URL is not set")
+	}
+
 	return &Config{
 		HTTPPort:    port,
 		Environment: environment,
+		DatabaseURL: databaseURL,
 	}, nil
 }
