@@ -222,6 +222,107 @@ jobs:
         run: go test ./... -run 'TestIntegration' -v
 
   # ---------------------------------------------------------------------
+  # build — the ONE self-hosted job in this workflow (CI-03, D-25). Every
+  # other job needs no localhost-reachable service and stays hosted; this
+  # one needs the local registry (localhost:5000, the self-hosted runner's
+  # own host-side push target — registry-smoke.sh's HOST_PUSH_TARGET, NOT
+  # the in-cluster pull reference athena-registry:5000 the chart's values
+  # use) for BOTH its registry-backed BuildKit cache and (from Plan 03-08
+  # onward) the eventual release push. D-25's registry-backed cache
+  # (rather than CLAUDE.md's own default suggestion of `type=gha`) is a
+  # deliberate divergence: this job runs on a self-hosted runner sitting
+  # next to the registry, so a cache stored there is a local hop, while
+  # `type=gha` would add a network round trip to GitHub's cache service
+  # for zero benefit on a local box — Plan 03-10 records this as an ADR.
+  #
+  # The trusted-context condition (ADR-0006/D-10, the same guard
+  # terraform-core-network.yml's `plan` job already established) admits
+  # push/merge_group events unconditionally (a push to main only happens
+  # after code already merged, by a repo collaborator with write access —
+  # by the time this job could run on push, the pwn-request window is
+  # already closed) and, for pull_request events specifically, ONLY
+  # same-repository-branch PRs — a fork PR's head repository never equals
+  # this workflow's own repository, so it never reaches this self-hosted
+  # job.
+  #
+  # This plan does NOT push a release image anywhere — that is explicitly
+  # Plan 03-08's job (D-26: PRs build-and-scan only, merges publish; this
+  # plan builds the graph both eras of that split reuse). `--load` puts
+  # the built image into the runner's own local Docker daemon so the scan
+  # job below can examine the EXACT image this job produced.
+  # ---------------------------------------------------------------------
+  build:
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.media_changed == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, athena-local]
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    defaults:
+      run:
+        working-directory: src/media
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: compute the immutable short-SHA tag (D-22 — never latest, never retagged)
+        id: vars
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: docker buildx build — registry-backed cache (mode=max, ALL intermediate layers)
+        # mode=max, not the default mode=min, is deliberate: mode=min
+        # exports only the FINAL image's layers, which is nearly
+        # worthless for this multi-stage Go build where the expensive
+        # layers (go mod download, go build) live in the discarded
+        # builder stage. mode=max exports every intermediate layer so a
+        # warm build genuinely skips the expensive steps, not just the
+        # cheap final COPY.
+        #
+        # Proven live this session (recorded in this task's commit
+        # message with the exact durations observed): a build with every
+        # local BuildKit cache cleared (`docker buildx prune -af`) and no
+        # `--cache-from` at all took ~49s; a second build with local
+        # caches ALSO cleared but importing ONLY the registry cache this
+        # step exports took ~2s — the registry cache, not merely a warm
+        # local disk, is what is being proven here.
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --cache-to "type=registry,ref=localhost:5000/athena-media-cache,mode=max" \
+            --cache-from "type=registry,ref=localhost:5000/athena-media-cache" \
+            --load \
+            -t "localhost:5000/athena-media:${{ steps.vars.outputs.image_tag }}" \
+            .
+
+      - name: save the built image as a workflow artifact (exact-image handoff to the scan job)
+        # The scan job below is a SEPARATE job that may land on a
+        # different instance of this estate's 2-instance self-hosted
+        # runner pool (Plan 02-02) — its own local Docker daemon is not
+        # guaranteed to already hold this image. `docker save` + an
+        # uploaded artifact is what guarantees the scan job examines the
+        # BYTE-IDENTICAL image this job built, not a same-tag rebuild
+        # that could quietly diverge (a different base image digest
+        # resolved between builds, for instance).
+        run: |
+          set -euo pipefail
+          docker save "localhost:5000/athena-media:${{ steps.vars.outputs.image_tag }}" -o media-image.tar
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: media-image-${{ github.run_id }}
+          path: src/media/media-image.tar
+          retention-days: 1
+
+  # ---------------------------------------------------------------------
   # gate — the single stable-named required status check the app
   # repository's ruleset points at (Task 3 wires
   # governance/rulesets.tf). `if: always()` so this job runs regardless of
@@ -241,7 +342,7 @@ jobs:
   # correct even if a future edit introduces a matrix here.
   # ---------------------------------------------------------------------
   gate:
-    needs: [detect-changes, lint-unit, migration]
+    needs: [detect-changes, lint-unit, migration, build]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -254,12 +355,18 @@ jobs:
           DETECT_RESULT="${{ needs.detect-changes.result }}"
           LINT_UNIT_RESULT="${{ needs.lint-unit.result }}"
           MIGRATION_RESULT="${{ needs.migration.result }}"
+          BUILD_RESULT="${{ needs.build.result }}"
           MEDIA_CHANGED="${{ needs.detect-changes.outputs.media_changed }}"
+          EVENT="${{ github.event_name }}"
+          IS_FORK_PR="${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
 
           echo "detect-changes.result = ${DETECT_RESULT}"
           echo "lint-unit.result      = ${LINT_UNIT_RESULT}"
           echo "migration.result      = ${MIGRATION_RESULT}"
+          echo "build.result          = ${BUILD_RESULT}"
           echo "media_changed         = ${MEDIA_CHANGED}"
+          echo "event_name            = ${EVENT}"
+          echo "is_fork_pr            = ${IS_FORK_PR}"
           echo
 
           FAIL=0
@@ -292,6 +399,32 @@ jobs:
 
           check_conditional_leg "lint-unit" "${LINT_UNIT_RESULT}"
           check_conditional_leg "migration" "${MIGRATION_RESULT}"
+
+          # build has a SECOND legitimate reason to be "skipped" beyond
+          # media_changed != 'true': the trusted-context guard (ADR-0006)
+          # deliberately skips it for a fork pull request even when media
+          # DID change — that is the CORRECT, intended behaviour, not a
+          # gate failure. A fork PR skipping the self-hosted job is exactly
+          # what CI-06 requires.
+          case "${BUILD_RESULT}" in
+            success)
+              echo "OK: build succeeded"
+              ;;
+            skipped|failure|cancelled)
+              if [ "${MEDIA_CHANGED}" != "true" ]; then
+                echo "OK: build had nothing to do — detect-changes reported media_changed=${MEDIA_CHANGED}; reported '${BUILD_RESULT}'"
+              elif [ "${IS_FORK_PR}" = "true" ]; then
+                echo "OK: build is intentionally skipped for a fork pull request (ADR-0006/CI-06 trust boundary); reported '${BUILD_RESULT}'"
+              else
+                echo "FAIL: build reported '${BUILD_RESULT}' but detect-changes reported media_changed=${MEDIA_CHANGED} on a trusted context — a leg that should have run either did not run at all or ran and failed"
+                FAIL=1
+              fi
+              ;;
+            *)
+              echo "FAIL: build reported an unrecognised result '${BUILD_RESULT}'"
+              FAIL=1
+              ;;
+          esac
 
           if [ "${FAIL}" -eq 1 ]; then
             echo
