@@ -93,7 +93,7 @@ func TestIntegration_PutGet_ByteIdenticalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	got, err := io.ReadAll(reader)
 	if err != nil {
