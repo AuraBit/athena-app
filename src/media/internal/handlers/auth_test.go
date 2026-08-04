@@ -231,9 +231,9 @@ func TestSessionGate_RejectsAbsentMalformedUnknownToken(t *testing.T) {
 	router, _ := newTestAuthRouter(t)
 
 	cases := map[string]string{
-		"no header":         "",
+		"no header":                    "",
 		"malformed (no Bearer prefix)": "not-bearer-scheme abc123",
-		"unknown token":      "Bearer this-token-was-never-issued",
+		"unknown token":                "Bearer this-token-was-never-issued",
 	}
 
 	for name, authHeader := range cases {
