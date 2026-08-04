@@ -1,10 +1,11 @@
 // Command media is the Athena media service's entrypoint. This phase's
 // slices add: /healthz (Plan 03-01, Task 2 — still no metrics registry, no
 // metrics route; APP-03's absent metrics surface is deliberate, a Phase 4
-// instrumentation exercise target, not an oversight), and now (Plan 03-04)
-// Postgres-backed users/media and Valkey-backed bearer sessions: /login,
-// /logout, and a session-gated route group Plan 03-05's upload route joins
-// without re-wiring this file.
+// instrumentation exercise target, not an oversight), Postgres-backed
+// users/media and Valkey-backed bearer sessions (Plan 03-04): /login,
+// /logout, and a session-gated route group; and now (Plan 03-05) the
+// session-gated upload route plus the public fetch/list routes, backed by
+// a startup-built S3 client (internal/storage).
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"github.com/AuraBit/athena-app/src/media/internal/db"
 	"github.com/AuraBit/athena-app/src/media/internal/handlers"
 	"github.com/AuraBit/athena-app/src/media/internal/session"
+	"github.com/AuraBit/athena-app/src/media/internal/storage"
 )
 
 func main() {
@@ -47,7 +49,24 @@ func main() {
 	}
 	defer sessions.Close()
 
+	// The S3 client is built once here too, alongside pool and sessions —
+	// same "initialised once at startup" shape (D-12). Targets
+	// cfg.S3Endpoint (the host.k3d.internal alias fixed in Plan 03-01),
+	// never reconstructed or re-pointed afterward.
+	objectStore, err := storage.New(ctx, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "media: fatal: connecting to S3: %v\n", err)
+		os.Exit(1)
+	}
+
 	auth := &handlers.AuthHandlers{Users: pool, Sessions: sessions}
+	upload := &handlers.UploadHandlers{
+		Storage:            objectStore,
+		Media:              pool,
+		KeyPrefix:          cfg.S3KeyPrefix,
+		MaxUploadSizeBytes: cfg.MaxUploadSizeBytes,
+	}
+	fetch := &handlers.FetchHandlers{Storage: objectStore, Media: pool, KeyPrefix: cfg.S3KeyPrefix}
 
 	// Release mode: suppresses gin's debug-route dump on every startup —
 	// still logs every request via gin.Default()'s Logger middleware below,
@@ -73,13 +92,18 @@ func main() {
 	router.POST("/login", auth.Login)
 	router.POST("/logout", auth.Logout)
 
-	// The session-gated route group. This phase registers no routes on it
-	// yet — Plan 03-05's upload endpoint is the first to join
-	// (protected.POST("/upload", ...)) without touching this wiring. Public
-	// fetch/list endpoints (D-01) are registered directly on router, not
-	// here.
+	// Public fetch/list endpoints (D-01: read is public, write is
+	// protected) — registered directly on router, never on the
+	// session-gated group below, and never inspecting the Authorization
+	// header themselves.
+	router.GET("/media", fetch.List)
+	router.GET("/media/*key", fetch.Fetch)
+
+	// The session-gated route group. Plan 03-05's upload endpoint is the
+	// first (and, this phase, only) route on it — the gate runs before any
+	// body byte is read (T-03-25).
 	protected := router.Group("/", auth.RequireSession)
-	_ = protected
+	protected.POST("/upload", upload.Upload)
 
 	addr := ":" + cfg.HTTPPort
 	fmt.Printf("media: listening on %s (environment=%s)\n", addr, cfg.Environment)
