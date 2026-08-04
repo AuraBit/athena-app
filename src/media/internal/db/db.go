@@ -115,6 +115,59 @@ func (p *Pool) InsertMedia(ctx context.Context, objectKey, contentType string, s
 	return &m, nil
 }
 
+// GetMediaByKey fetches a single media row by its exact object key. It
+// returns ErrNotFound (never a generic error) when no row matches — Plan
+// 03-05, Task 2's Fetch handler maps that identically to a syntactically
+// rejected (traversal) key, so the endpoint never becomes a prefix oracle
+// revealing which case occurred (T-03-28).
+func (p *Pool) GetMediaByKey(ctx context.Context, objectKey string) (*MediaItem, error) {
+	var m MediaItem
+	err := p.pool.QueryRow(ctx,
+		`SELECT id, object_key, content_type, size_bytes, owner_id, created_at
+		 FROM media
+		 WHERE object_key = $1`,
+		objectKey,
+	).Scan(&m.ID, &m.ObjectKey, &m.ContentType, &m.SizeBytes, &m.OwnerID, &m.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("db: get media by key: %w", err)
+	}
+	return &m, nil
+}
+
+// ListAllMedia returns every media row across every owner, newest first
+// with id as a deterministic tiebreaker — the public list endpoint's
+// backing query (Plan 03-05, Task 2, D-01: read is public, unlike
+// ListMedia below which upload's owner-scoped internal bookkeeping would
+// use). An empty table returns an empty (not nil-error) slice, matching
+// ListMedia's own empty-input contract.
+func (p *Pool) ListAllMedia(ctx context.Context) ([]MediaItem, error) {
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, object_key, content_type, size_bytes, owner_id, created_at
+		 FROM media
+		 ORDER BY created_at DESC, id ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db: list all media: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]MediaItem, 0)
+	for rows.Next() {
+		var m MediaItem
+		if err := rows.Scan(&m.ID, &m.ObjectKey, &m.ContentType, &m.SizeBytes, &m.OwnerID, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("db: scan media row: %w", err)
+		}
+		items = append(items, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db: list all media rows: %w", err)
+	}
+	return items, nil
+}
+
 // ListMedia returns ownerID's media rows, newest first — the query
 // migration 000004's idx_media_owner_id_created_at index exists to serve.
 // An owner with no media rows gets an empty (not nil-error) slice.
