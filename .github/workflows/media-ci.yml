@@ -43,7 +43,12 @@ permissions:
 # flagged_assumptions).
 concurrency:
   group: media-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs supersede each other (finishing a scan against a stale PR HEAD
+  # wastes the runner). Default-branch PUSH runs must NEVER cancel each
+  # other: a docs-only push cancelling a media merge's in-flight run
+  # silently skips that merge's publish+handoff while every gate stays
+  # green — observed live on run 30936688350 (f4207dc, Plan 03-10 close).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Single source of truth for the migration tool's pinned version — MUST
