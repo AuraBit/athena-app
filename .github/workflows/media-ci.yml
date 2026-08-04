@@ -219,7 +219,17 @@ jobs:
         run: migrate -path migrations -database "${MEDIA_TEST_DATABASE_URL}" up
 
       - name: go test — integration suite against the migrated schema
-        run: go test ./... -run 'TestIntegration' -v
+        # Scoped to internal/db ONLY — RULE 1 FIX, found live this
+        # session: `go test ./... -run 'TestIntegration'` matches every
+        # package's TestIntegration_* tests, including internal/session
+        # (needs a live Valkey) and internal/storage (needs a live
+        # LocalStack S3), neither of which this job provides — this job's
+        # Postgres service container proves ONLY the migrated schema
+        # internal/db's own integration tests exercise. Confirmed live:
+        # the unscoped form failed this job with "connect: connection
+        # refused" against ports 16379/4566 that simply don't exist on a
+        # hosted runner with no Valkey/LocalStack service container.
+        run: go test ./internal/db/... -run 'TestIntegration' -v
 
   # ---------------------------------------------------------------------
   # build — the ONE self-hosted job in this workflow (CI-03, D-25). Every
@@ -323,6 +333,126 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------
+  # scan — hosted (Trivy needs no localhost-reachable service; it scans
+  # the downloaded image tarball, not a live target). POL-03 wants
+  # scanning, D-23 wants a specific gate threshold, D-27 wants the
+  # findings visible — three separate jobs the scanner does, split into
+  # two invocations of the same `trivy image` command below rather than
+  # one.
+  #
+  # WHY TWO INVOCATIONS (checked this session, recorded per this task's
+  # own instruction to verify rather than assume): `aquasecurity/
+  # trivy-action` v0.36.0 [pinned below] has two OPEN upstream issues
+  # (aquasecurity/trivy-action#435, #309 — both confirmed open via the
+  # GitHub API this session) where `severity:` is silently ignored when
+  # combined with SARIF output + a blocking `exit-code`, reporting/gating
+  # on ALL severities instead of just the configured ones. Neither issue
+  # is closed as of this pin, so the single-invocation shortcut is NOT
+  # safe to assume fixed — this job runs Trivy twice instead (the
+  # vulnerability database is cached between invocations by the action,
+  # so the second run is cheap): one non-blocking SARIF invocation
+  # covering every severity (feeds Code Scanning, D-27), and one
+  # table-format, HIGH/CRITICAL-only, --ignore-unfixed, blocking
+  # invocation (the actual gate, D-23).
+  #
+  # ignore-unfixed is deliberate (D-23): a gate that blocks on findings
+  # nobody can act on is a gate people learn to bypass, and a bypassed
+  # gate is worse than no gate because it manufactures confidence nobody
+  # earned.
+  # ---------------------------------------------------------------------
+  scan:
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.media_changed == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # github/codeql-action/upload-sarif, this job only
+      pull-requests: write # marocchino/sticky-pull-request-comment, this job only
+    defaults:
+      run:
+        working-directory: src/media
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: media-image-${{ github.run_id }}
+          path: src/media
+
+      - name: docker load — the EXACT image the build job produced, not a rebuild
+        run: docker load -i media-image.tar
+
+      - name: check-trivyignore.sh (D-23 auditable-exception lint — fails the run on an unjustified entry)
+        run: bash ../../scripts/check-trivyignore.sh
+
+      - name: trivy — reporting invocation (ALL severities, non-blocking, feeds Code Scanning)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
+          format: sarif
+          output: trivy-report.sarif
+          severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+          trivyignores: .trivyignore
+          exit-code: "0" # non-blocking, deliberately — this invocation reports, it never gates
+
+      - uses: github/codeql-action/upload-sarif@404bd795832c959ffb8efae2b1b4cc1aafc82058 # v3.37.6
+        with:
+          sarif_file: src/media/trivy-report.sarif
+
+      - name: trivy — human-readable table for the job summary (same findings the SARIF invocation reported)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
+          format: table
+          output: trivy-report.txt
+          severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+          trivyignores: .trivyignore
+          exit-code: "0"
+
+      - name: write findings table to the job summary (D-27)
+        run: |
+          {
+            echo "### Trivy findings — localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
+            echo '```'
+            cat trivy-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: post/update the sticky pull-request comment (D-27, reusing the estate's existing cross-repo credential)
+        # ATHENA_CI_BOT_TOKEN — the SAME athena-ci-bot PAT
+        # terraform-core-network.yml's sticky-comment step already uses in
+        # athena-infra, provisioned as this repository's own secret with
+        # the identical value (no new credential minted for this).
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          GITHUB_TOKEN: ${{ secrets.ATHENA_CI_BOT_TOKEN }}
+          header: media-trivy
+          path: src/media/trivy-report.txt
+          message: |
+            ### Trivy scan — media service
+
+            <details><summary>Show findings (all severities)</summary>
+
+            ```
+            {{{content}}}
+            ```
+
+            </details>
+
+      - name: trivy — GATING invocation (HIGH/CRITICAL only, --ignore-unfixed, blocking)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
+          format: table
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------
   # gate — the single stable-named required status check the app
   # repository's ruleset points at (Task 3 wires
   # governance/rulesets.tf). `if: always()` so this job runs regardless of
@@ -342,7 +472,7 @@ jobs:
   # correct even if a future edit introduces a matrix here.
   # ---------------------------------------------------------------------
   gate:
-    needs: [detect-changes, lint-unit, migration, build]
+    needs: [detect-changes, lint-unit, migration, build, scan]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -356,6 +486,7 @@ jobs:
           LINT_UNIT_RESULT="${{ needs.lint-unit.result }}"
           MIGRATION_RESULT="${{ needs.migration.result }}"
           BUILD_RESULT="${{ needs.build.result }}"
+          SCAN_RESULT="${{ needs.scan.result }}"
           MEDIA_CHANGED="${{ needs.detect-changes.outputs.media_changed }}"
           EVENT="${{ github.event_name }}"
           IS_FORK_PR="${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
@@ -364,6 +495,7 @@ jobs:
           echo "lint-unit.result      = ${LINT_UNIT_RESULT}"
           echo "migration.result      = ${MIGRATION_RESULT}"
           echo "build.result          = ${BUILD_RESULT}"
+          echo "scan.result           = ${SCAN_RESULT}"
           echo "media_changed         = ${MEDIA_CHANGED}"
           echo "event_name            = ${EVENT}"
           echo "is_fork_pr            = ${IS_FORK_PR}"
@@ -422,6 +554,31 @@ jobs:
               ;;
             *)
               echo "FAIL: build reported an unrecognised result '${BUILD_RESULT}'"
+              FAIL=1
+              ;;
+          esac
+
+          # scan shares build's exact skip semantics — it `needs: build`
+          # with `if: ... && needs.build.result == 'success'`, so any
+          # reason build legitimately skipped cascades to scan skipping
+          # too (media_changed != 'true', OR a fork PR blocked upstream at
+          # the build job itself).
+          case "${SCAN_RESULT}" in
+            success)
+              echo "OK: scan succeeded"
+              ;;
+            skipped|failure|cancelled)
+              if [ "${MEDIA_CHANGED}" != "true" ]; then
+                echo "OK: scan had nothing to do — detect-changes reported media_changed=${MEDIA_CHANGED}; reported '${SCAN_RESULT}'"
+              elif [ "${IS_FORK_PR}" = "true" ]; then
+                echo "OK: scan is intentionally skipped for a fork pull request (its own upstream build was skipped by the same trust boundary); reported '${SCAN_RESULT}'"
+              else
+                echo "FAIL: scan reported '${SCAN_RESULT}' but detect-changes reported media_changed=${MEDIA_CHANGED} on a trusted context — a leg that should have run either did not run at all or ran and failed"
+                FAIL=1
+              fi
+              ;;
+            *)
+              echo "FAIL: scan reported an unrecognised result '${SCAN_RESULT}'"
               FAIL=1
               ;;
           esac

@@ -1,0 +1,28 @@
+# .trivyignore — the media service's scanner exception register (D-23,
+# POL-06 seed; Plan 03-07, Task 3).
+#
+# Empty today — no exception exists yet because none has been needed.
+# This file's SHAPE matters more than its current emptiness: it is the
+# seed of Phase 7's estate-wide exception register, and every future
+# entry here MUST follow the discipline
+# scripts/check-trivyignore.sh enforces (run as a workflow step, so an
+# unjustified entry fails the run, not merely a style nit a reviewer might
+# miss):
+#
+#   # Reason: <finding id/description> — <why this is accepted, and by
+#   #   whom/until when if relevant>
+#   CVE-YYYY-NNNNN
+#
+# The comment line(s) directly above a finding ID are that finding's
+# justification — check-trivyignore.sh requires a real, non-empty,
+# non-boilerplate reason immediately preceding every entry. A bare
+# `CVE-YYYY-NNNNN` with no preceding comment, or a comment reading only
+# "todo"/"n/a"/similar, fails the lint exactly like an un-justified
+# `checkov:skip=` fails scripts/verify-checkov-skips.sh in athena-infra —
+# the same discipline, applied to this estate's second scanner.
+#
+# MUST NOT be used to silence a finding in order to turn a red gate green
+# (this plan's own prohibition, restated at the point where it would be
+# easiest to violate): every entry here is a deliberate, reviewable,
+# justified acceptance of a specific, named risk — never a way to route
+# around the gate.
