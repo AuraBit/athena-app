@@ -112,7 +112,12 @@ func (h *FetchHandlers) Fetch(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch object"})
 		return
 	}
-	defer reader.Close()
+	// A close error here is a best-effort cleanup failure on an
+	// already-served (or failed-mid-stream) response — nothing left to do
+	// with it but note it, never a reason to change the response already
+	// sent. The linter (errcheck) requires acknowledging the return value
+	// explicitly rather than a bare `defer reader.Close()`.
+	defer func() { _ = reader.Close() }()
 
 	c.Header("Content-Type", item.ContentType)
 	c.Status(http.StatusOK)
