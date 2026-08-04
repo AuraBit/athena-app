@@ -13,15 +13,16 @@
 // the exact defect Phase 5 exists to find and fix (CONTEXT.md D-12).
 //
 // This struct started (Plan 03-01, Task 2) with only the HTTP listen port
-// and the environment name. Plan 03-04's Task 1 grows it with the Postgres
-// connection string — never a second config type or a second loader. That
-// same plan's Task 2 will grow it further with the Valkey address and
-// session lifetime, and Plan 03-05 will add S3 settings the same way.
+// and the environment name. Plan 03-04's Task 1 grew it with the Postgres
+// connection string, and this task (Plan 03-04, Task 2) grows it further
+// with the Valkey address and session lifetime — never a second config
+// type or a second loader. Plan 03-05 will add S3 settings the same way.
 package config
 
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 // Config is the media service's entire runtime configuration, populated
@@ -37,6 +38,17 @@ type Config struct {
 	// (postgres://user:pass@host:port/db?sslmode=disable) the pgx pool in
 	// internal/db is constructed from.
 	DatabaseURL string
+	// ValkeyAddr is the media-session Valkey instance's address
+	// (host:port) — deliberately never the cart instance's address; the
+	// two are separately named services (D-18), and pointing this at the
+	// cart instance is a configuration error a reader can see because the
+	// env var name and the Service name it must match are both explicit.
+	ValkeyAddr string
+	// SessionTTLSeconds is the server-side session lifetime, in seconds,
+	// applied as a Valkey key TTL at session creation (internal/session).
+	// Exposed as configuration rather than a literal buried in that
+	// package so it is visible and tunable.
+	SessionTTLSeconds int
 }
 
 // Load reads every setting from environment variables a single time. A
@@ -59,9 +71,31 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("required environment variable MEDIA_DATABASE_URL is not set")
 	}
 
+	valkeyAddr := os.Getenv("MEDIA_VALKEY_ADDR")
+	if valkeyAddr == "" {
+		return nil, fmt.Errorf("required environment variable MEDIA_VALKEY_ADDR is not set")
+	}
+
+	// A documented default (thirty minutes) rather than a required
+	// variable — a reasonable default for a demo service, but still a
+	// config value, never a literal buried in internal/session.
+	sessionTTLSeconds := 1800
+	if raw := os.Getenv("MEDIA_SESSION_TTL_SECONDS"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("MEDIA_SESSION_TTL_SECONDS must be an integer number of seconds: %w", err)
+		}
+		if parsed <= 0 {
+			return nil, fmt.Errorf("MEDIA_SESSION_TTL_SECONDS must be positive, got %d", parsed)
+		}
+		sessionTTLSeconds = parsed
+	}
+
 	return &Config{
-		HTTPPort:    port,
-		Environment: environment,
-		DatabaseURL: databaseURL,
+		HTTPPort:          port,
+		Environment:       environment,
+		DatabaseURL:       databaseURL,
+		ValkeyAddr:        valkeyAddr,
+		SessionTTLSeconds: sessionTTLSeconds,
 	}, nil
 }
