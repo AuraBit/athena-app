@@ -61,6 +61,13 @@ The pipeline was proven against a skeleton before any real service code —
 the CI walking-skeleton and the workloads above are what land next. Watch
 the repo if you want to follow along.
 
+## Provenance
+
+The Online Boutique fork under `src/` (everything except `src/media`) is vendored from
+[GoogleCloudPlatform/microservices-demo](https://github.com/GoogleCloudPlatform/microservices-demo)
+at a pinned release tag, Apache-2.0 licensed. Full provenance, the pinned tag/commit, the
+no-resync declaration, and the one deliberate exclusion are recorded in [`UPSTREAM.md`](UPSTREAM.md).
+
 ## License
 
 [MIT](LICENSE)
