@@ -57,9 +57,43 @@ on why the merge queue exists only here, and the topology ADR in
 
 The governance layer landed first, on purpose: `CODEOWNERS` path routing, a
 lint workflow wired into branch protection, and a merge queue on `main`.
-The pipeline was proven against a skeleton before any real service code —
-the CI walking-skeleton and the workloads above are what land next. Watch
-the repo if you want to follow along.
+The pipeline was proven against a skeleton before any real service code, then
+the media service's ArgoCD-synced tracer went live, and now the Boutique fork
+below has landed too.
+
+### Service inventory
+
+| Service | Language | Owning team |
+|---|---|---|
+| `src/frontend` | Go | team-storefront |
+| `src/adservice` | Java | team-storefront |
+| `src/recommendationservice` | Python | team-storefront |
+| `src/cartservice` | C# | team-commerce |
+| `src/checkoutservice` | Go | team-commerce |
+| `src/paymentservice` | JavaScript | team-commerce |
+| `src/shippingservice` | Go | team-commerce |
+| `src/productcatalogservice` | Go | team-catalog |
+| `src/currencyservice` | JavaScript | team-catalog |
+| `src/emailservice` | Python | team-comms |
+| `src/loadgenerator` | Python (Locust) | team-comms |
+| `src/media` | Go (custom) | team-media |
+
+Eleven of the twelve upstream Online Boutique services are vendored and deployed;
+`shoppingassistantservice` is excluded (depends on managed AlloyDB + Vertex AI with
+no $0 local stand-in) — see [`UPSTREAM.md`](UPSTREAM.md)'s exclusions section.
+
+### Building
+
+Every vendored Boutique service builds and pushes as an immutably-tagged
+`athena-<service>` image to the local registry via:
+
+```bash
+scripts/build-all-images.sh          # every service
+scripts/build-all-images.sh frontend # a single service, for fast iteration
+```
+
+The media service builds its own Dockerfile directly (`src/media/Dockerfile`) — it
+is CI-owned from Plan 03-07 onward, not part of `build-all-images.sh`'s scope.
 
 ## Provenance
 
