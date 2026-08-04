@@ -405,7 +405,10 @@ jobs:
         with:
           image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
           format: sarif
-          output: trivy-report.sarif
+          # NOTE: action paths resolve from the WORKSPACE ROOT — the job's
+          # defaults.run.working-directory (src/media) applies to `run:`
+          # steps only, so the output path must carry the prefix explicitly.
+          output: src/media/trivy-report.sarif
           severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
           trivyignores: .trivyignore
           exit-code: "0" # non-blocking, deliberately — this invocation reports, it never gates
@@ -419,7 +422,7 @@ jobs:
         with:
           image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
           format: table
-          output: trivy-report.txt
+          output: src/media/trivy-report.txt # workspace-root-relative, same as the sarif step
           severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
           trivyignores: .trivyignore
           exit-code: "0"
