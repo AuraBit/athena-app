@@ -106,6 +106,9 @@ func main() {
 	protected.POST("/upload", upload.Upload)
 
 	addr := ":" + cfg.HTTPPort
+	// Log hygiene invariant (T-03-19): this startup line is the service's
+	// only stdout output — no handler may log a token, password, hash or
+	// object key, because Phase 4 ships this stream to Loki verbatim.
 	fmt.Printf("media: listening on %s (environment=%s)\n", addr, cfg.Environment)
 	if err := router.Run(addr); err != nil {
 		fmt.Fprintf(os.Stderr, "media: fatal: server error: %v\n", err)

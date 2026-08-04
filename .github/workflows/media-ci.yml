@@ -130,7 +130,7 @@ jobs:
       - uses: golangci/golangci-lint-action@d583c34f0599d37dbac4a198b9c83201be380893 # v9.3.0
         with:
           working-directory: src/media
-          version: latest
+          version: v2.12.2 # exact pin (T-03-SC/07) — matches the estate's toolchain-pinning discipline; bump deliberately, never float
 
       - name: go test ./... -short (no external services)
         run: go test ./... -short -v
@@ -292,6 +292,14 @@ jobs:
           echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # network=host is load-bearing: this action's default is a
+          # docker-container BuildKit on the bridge network, where
+          # localhost:5000 is the BUILDER's own loopback — the cache
+          # import/export below then fails with connection-refused against
+          # the estate registry. Host networking makes the runner host's
+          # 127.0.0.1:5000 (the k3d registry) reachable from BuildKit.
+          driver-opts: network=host
 
       - name: docker buildx build — registry-backed cache (mode=max, ALL intermediate layers)
         # mode=max, not the default mode=min, is deliberate: mode=min
@@ -397,7 +405,10 @@ jobs:
         with:
           image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
           format: sarif
-          output: trivy-report.sarif
+          # NOTE: action paths resolve from the WORKSPACE ROOT — the job's
+          # defaults.run.working-directory (src/media) applies to `run:`
+          # steps only, so the output path must carry the prefix explicitly.
+          output: src/media/trivy-report.sarif
           severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
           trivyignores: .trivyignore
           exit-code: "0" # non-blocking, deliberately — this invocation reports, it never gates
@@ -411,7 +422,7 @@ jobs:
         with:
           image-ref: "localhost:5000/athena-media:${{ needs.build.outputs.image_tag }}"
           format: table
-          output: trivy-report.txt
+          output: src/media/trivy-report.txt # workspace-root-relative, same as the sarif step
           severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
           trivyignores: .trivyignore
           exit-code: "0"
@@ -425,15 +436,17 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: post/update the sticky pull-request comment (D-27, reusing the estate's existing cross-repo credential)
-        # ATHENA_CI_BOT_TOKEN — the SAME athena-ci-bot PAT
-        # terraform-core-network.yml's sticky-comment step already uses in
-        # athena-infra, provisioned as this repository's own secret with
-        # the identical value (no new credential minted for this).
+      - name: post/update the sticky pull-request comment (D-27)
+        # Uses the run's own GITHUB_TOKEN (this job grants pull-requests:
+        # write above) — a same-repo PR comment needs no cross-repo
+        # credential. The athena-ci-bot PAT is deliberately NOT referenced
+        # here: the threat model (T-03-44) confines that credential to the
+        # default-branch-push gitops-handoff job, so a pull_request-triggered
+        # run never has it in scope.
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
-          GITHUB_TOKEN: ${{ secrets.ATHENA_CI_BOT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: media-trivy
           path: src/media/trivy-report.txt
           message: |
