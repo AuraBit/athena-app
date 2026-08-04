@@ -12,6 +12,16 @@ storage, CI — as the fixture every infrastructure phase exercises. What does
 it deliberately include, and why does it ship with almost no observability
 instrumentation in Phase 3?
 
+## Considered Options
+
+* **Adopt a ready-made stateful demo service** — rejected: a service this
+  estate does not own cannot be freely broken, migrated, and retrofitted,
+  and its pre-built instrumentation would pre-solve Phase 4/5's exercises.
+* **Build the media service fully instrumented from day one** — rejected:
+  it erases the before-picture that makes the observability and rotation
+  phases demonstrable.
+* **Build a minimal owned service, deliberately uninstrumented** (chosen).
+
 ## Decision
 
 The media service is a small Go service with exactly the state that makes

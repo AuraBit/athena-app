@@ -15,12 +15,12 @@ snapshot with no upstream link?
 
 ## Considered Options
 
-1. **GitHub fork / upstream remote** — rejected: keeps upstream's identity
+* **GitHub fork / upstream remote** — rejected: keeps upstream's identity
    and history authoritative, makes the eventual full rebrand a permanent
    merge conflict, and implies an update contract this estate does not want.
-2. **Submodule/subtree** — rejected: submodules break worktree/CI ergonomics
+* **Submodule/subtree** — rejected: submodules break worktree/CI ergonomics
    and subtree merges reintroduce the tracking we are avoiding.
-3. **Hard fork: clean file snapshot at a pinned tag** (chosen) — vendored
+* **Hard fork: clean file snapshot at a pinned tag** (chosen) — vendored
    into src/ with provenance recorded in UPSTREAM.md.
 
 ## Decision

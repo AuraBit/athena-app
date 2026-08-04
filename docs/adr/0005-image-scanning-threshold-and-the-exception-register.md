@@ -12,6 +12,16 @@ on everything gets bypassed; a gate that blocks on nothing is decoration.
 Findings also need somewhere visible to live, and exceptions need auditable
 justification.
 
+## Considered Options
+
+* **One blocking invocation covering all severities** — rejected: blocks on
+  unfixable findings (gate-bypass culture) and the action's severity filter
+  interacts unreliably with the reporting format (open upstream issues).
+* **Report-only scanning, no gate** — rejected: POL-03 requires a gate, and
+  findings without enforcement decay into wallpaper.
+* **Dual invocation: report everything, block on fixable HIGH/CRITICAL,
+  justification-linted exception file** (chosen).
+
 ## Decision
 
 Trivy runs twice in one job (DB cached between invocations): a non-blocking
